@@ -681,11 +681,14 @@ def render_step_4_export():
         ("📄 PDF Report", "Professional formatted report", "pdf"),
     ]
     
+    # Create format options dict for display
+    format_options = {fmt[2]: f"{fmt[0]}\n{fmt[1]}" for fmt in export_formats}
+    
     st.markdown("### Select Format")
     selected_format = st.radio(
         "Choose export format:",
         options=[fmt[2] for fmt in export_formats],
-        format_func=lambda x: next(f[0] + ": " + f[1] for f in export_formats if f[2] == x),
+        format_func=lambda x: format_options[x],
         key="export_format"
     )
     
