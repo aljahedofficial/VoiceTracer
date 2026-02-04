@@ -7,6 +7,9 @@ Main entry point. Implements the 4-step dashboard workflow.
 import streamlit as st
 import sys
 from pathlib import Path
+import PyPDF2
+from docx import Document
+import io
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
@@ -14,6 +17,36 @@ sys.path.insert(0, str(Path(__file__).parent / 'src'))
 from models import DocumentPair, AnalysisResult, MetricScores, MetricDeltas, Session
 from metric_calculator import MetricCalculationEngine, MetricComparisonEngine, AIismCalculator
 from text_processor import TextProcessor
+
+
+# ============================================================================
+# FILE EXTRACTION FUNCTIONS
+# ============================================================================
+def extract_text_from_txt(file) -> str:
+    """Extract text from TXT file."""
+    return file.read().decode('utf-8')
+
+def extract_text_from_pdf(file) -> str:
+    """Extract text from PDF file using PyPDF2."""
+    try:
+        pdf_reader = PyPDF2.PdfReader(file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text()
+        return text if text.strip() else "[Warning: PDF text extraction failed. Try OCR or manual copy.]"
+    except Exception as e:
+        return f"[Error extracting PDF: {str(e)}]"
+
+def extract_text_from_docx(file) -> str:
+    """Extract text from DOCX file."""
+    try:
+        doc = Document(file)
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        return text.strip()
+    except Exception as e:
+        return f"[Error extracting DOCX: {str(e)}]"
 
 
 # ============================================================================
@@ -166,17 +199,36 @@ def render_step_1_input():
     
     # File upload section
     st.markdown("#### Upload Files (Optional)")
+    st.markdown("*Supports: TXT, PDF (text extraction), DOCX, DOC*")
     col1_up, col2_up = st.columns(2)
     
     with col1_up:
-        orig_file = st.file_uploader("Upload original text", key="orig_file", type=['txt'])
+        orig_file = st.file_uploader("Upload original text", key="orig_file", type=['txt', 'pdf', 'docx', 'doc'])
         if orig_file:
-            original_text = orig_file.read().decode('utf-8')
+            file_ext = orig_file.name.split('.')[-1].lower()
+            try:
+                if file_ext == 'txt':
+                    original_text = extract_text_from_txt(orig_file)
+                elif file_ext == 'pdf':
+                    original_text = extract_text_from_pdf(orig_file)
+                elif file_ext in ['docx', 'doc']:
+                    original_text = extract_text_from_docx(orig_file)
+            except Exception as e:
+                st.error(f"Failed to extract text: {str(e)}")
     
     with col2_up:
-        edit_file = st.file_uploader("Upload edited text", key="edit_file", type=['txt'])
+        edit_file = st.file_uploader("Upload edited text", key="edit_file", type=['txt', 'pdf', 'docx', 'doc'])
         if edit_file:
-            edited_text = edit_file.read().decode('utf-8')
+            file_ext = edit_file.name.split('.')[-1].lower()
+            try:
+                if file_ext == 'txt':
+                    edited_text = extract_text_from_txt(edit_file)
+                elif file_ext == 'pdf':
+                    edited_text = extract_text_from_pdf(edit_file)
+                elif file_ext in ['docx', 'doc']:
+                    edited_text = extract_text_from_docx(edit_file)
+            except Exception as e:
+                st.error(f"Failed to extract text: {str(e)}")
     
     # Text statistics
     if original_text or edited_text:
