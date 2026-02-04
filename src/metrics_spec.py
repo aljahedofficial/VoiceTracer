@@ -1,0 +1,426 @@
+"""
+VoiceTracer Metric Definitions & Formulas
+
+Defines how each metric is calculated, normalized, and interpreted.
+Reference: "The Monolingualism of the Machine" thesis methodology.
+"""
+
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
+from enum import Enum
+import math
+
+
+class MetricType(Enum):
+    """Types of metrics in VoiceTracer."""
+    BURSTINESS = "burstiness"
+    LEXICAL_DIVERSITY = "lexical_diversity"
+    SYNTACTIC_COMPLEXITY = "syntactic_complexity"
+    AI_ISM_LIKELIHOOD = "ai_ism_likelihood"
+
+
+@dataclass
+class MetricDefinition:
+    """Specification for a metric."""
+    metric_type: MetricType
+    name: str
+    short_description: str
+    long_description: str
+    formula: str
+    range_min: float
+    range_max: float
+    optimal_value: float
+    interpretation_low: str
+    interpretation_high: str
+    thesis_relevance: str
+
+
+# ============================================================================
+# METRIC 1: BURSTINESS INDEX
+# ============================================================================
+BURSTINESS_DEFINITION = MetricDefinition(
+    metric_type=MetricType.BURSTINESS,
+    name="Burstiness Index",
+    short_description="Sentence length variation (SD / mean)",
+    long_description="""
+    Measures the variation in sentence lengths throughout the text.
+    
+    Formula: Standard Deviation of sentence lengths / Mean sentence length
+    
+    Calculation Steps:
+    1. Extract all sentences from text
+    2. Count words in each sentence
+    3. Calculate mean sentence length
+    4. Calculate standard deviation of sentence lengths
+    5. Divide SD by mean (coefficient of variation)
+    """,
+    formula="σ(sentence_lengths) / μ(sentence_lengths)",
+    range_min=0.0,
+    range_max=3.0,
+    optimal_value=1.3,  # Human-like variation
+    interpretation_low="Machine-like uniformity; suggests AI editing standardized lengths",
+    interpretation_high="Human-like variation; indicates authentic, natural writing",
+    thesis_relevance="""
+    AI models optimize for readability and consistency, standardizing sentence lengths.
+    Human writers naturally vary sentence structures for emphasis and flow.
+    This metric directly measures homogenization of sentence-level style.
+    """
+)
+
+
+# ============================================================================
+# METRIC 2: LEXICAL DIVERSITY
+# ============================================================================
+LEXICAL_DIVERSITY_DEFINITION = MetricDefinition(
+    metric_type=MetricType.LEXICAL_DIVERSITY,
+    name="Lexical Diversity",
+    short_description="Vocabulary richness (TTR or MTLD)",
+    long_description="""
+    Measures vocabulary richness and diversity.
+    
+    Method 1 - Type-Token Ratio (TTR):
+    Formula: Unique words / Total words
+    
+    Method 2 - MTLD (Mean Segmental Type-Token Ratio):
+    More robust to text length variations
+    Segments text and averages TTR across segments
+    
+    For VoiceTracer, we use MTLD normalized 0-1:
+    MTLD_normalized = (MTLD - 70) / 110  (capped at 1.0)
+    
+    Interpretation:
+    - < 0.4: Low diversity (formulaic, repetitive)
+    - 0.4-0.6: Moderate diversity
+    - > 0.6: High diversity (varied vocabulary)
+    """,
+    formula="MTLD_normalized = (MTLD - 70) / 110",
+    range_min=0.0,
+    range_max=1.0,
+    optimal_value=0.65,  # Human-like vocabulary richness
+    interpretation_low="Formulaic vocabulary; suggests AI standardization of word choice",
+    interpretation_high="Rich vocabulary; indicates authentic, varied expression",
+    thesis_relevance="""
+    AI models rely on common academic phrases and formulaic expressions.
+    Human L2 writers use more diverse (even if occasionally awkward) vocabulary.
+    Vocabulary flattening is a key indicator of stylistic homogenization.
+    """
+)
+
+
+# ============================================================================
+# METRIC 3: SYNTACTIC COMPLEXITY
+# ============================================================================
+SYNTACTIC_COMPLEXITY_DEFINITION = MetricDefinition(
+    metric_type=MetricType.SYNTACTIC_COMPLEXITY,
+    name="Syntactic Complexity",
+    short_description="Sentence structure diversity (words/sent, subordination, modifiers)",
+    long_description="""
+    Composite metric measuring structural complexity across 3 dimensions:
+    
+    1. Average Sentence Length (ASL)
+       Formula: Total words / Number of sentences
+       Typical range: 15-25 words
+    
+    2. Subordination Ratio
+       Formula: Subordinate clauses / Total clauses
+       Measures use of dependent clauses (because, when, which, etc.)
+       Range: 0-1 (higher = more complex)
+    
+    3. Modifier Density
+       Formula: Modifying phrases & adjectives / Total tokens
+       Measures descriptive complexity
+       Range: 0-1 (higher = more modified)
+    
+    Composite Score:
+    SC = (ASL_norm × 0.4) + (Sub_ratio × 0.3) + (Mod_density × 0.3)
+    Where norm scores are scaled to 0-1 range
+    
+    Interpretation:
+    - High complexity: Varied sentence structures, sophisticated syntax
+    - Low complexity: Simple, repetitive sentence patterns
+    """,
+    formula="SC = (ASL_norm × 0.4) + (Sub_ratio × 0.3) + (Mod_density × 0.3)",
+    range_min=0.0,
+    range_max=1.0,
+    optimal_value=0.65,  # Balanced complexity
+    interpretation_low="Simple structures; suggests AI simplification for clarity",
+    interpretation_high="Complex structures; indicates authentic, sophisticated syntax",
+    thesis_relevance="""
+    AI editing often simplifies sentence structures and reduces clause complexity.
+    Authentic L2 writing contains more structural variety (including mistakes).
+    Syntactic flattening is another key marker of homogenization.
+    """
+)
+
+
+# ============================================================================
+# METRIC 4: AI-ISM LIKELIHOOD (PATTERN DETECTION)
+# ============================================================================
+AI_ISM_DEFINITION = MetricDefinition(
+    metric_type=MetricType.AI_ISM_LIKELIHOOD,
+    name="AI-ism Likelihood",
+    short_description="Frequency of AI-characteristic phrases and patterns",
+    long_description="""
+    Detects formulaic phrases and patterns characteristic of AI-generated text.
+    
+    Categorized AI-isms:
+    
+    1. OPENING HEDGES (0-30 points)
+       - "It is important to note that..."
+       - "It should be noted that..."
+       - "It is widely recognized that..."
+       - Detection: Regex + frequency
+    
+    2. CLOSING/TRANSITION PHRASES (0-30 points)
+       - "In conclusion..."
+       - "To summarize..."
+       - "It is therefore clear that..."
+       - "In light of the above..."
+    
+    3. FORMULAIC CONNECTORS (0-20 points)
+       - "delve into", "shed light on", "pave the way"
+       - "leverage", "in the context of", "moreover"
+       - Rare in authentic L2 writing
+    
+    4. REPETITIVE PATTERNS (0-20 points)
+       - Repeated n-grams (bigrams appearing >3x)
+       - Passive voice ratio > 25%
+       - Unusual punctuation uniformity
+    
+    Total Score: 0-100 (normalized)
+    - 0-20: Likely human writing
+    - 20-50: Mixed human/AI characteristics
+    - 50-80: Possibly AI-edited
+    - 80-100: Likely AI-generated
+    """,
+    formula="AI-ism = (openings + closings + connectors + patterns) / 4",
+    range_min=0.0,
+    range_max=100.0,
+    optimal_value=15.0,  # Low score indicates human writing
+    interpretation_low="Human-like characteristics; natural expression",
+    interpretation_high="AI-like characteristics; formulaic patterns detected",
+    thesis_relevance="""
+    AI models generate text from patterns learned in training data.
+    This creates recognizable stylistic fingerprints (formulaic phrases).
+    Documenting AI-ism frequency shows how AI-editing introduces artificiality.
+    """
+)
+
+
+# ============================================================================
+# AI-ISM PHRASE DATABASE
+# ============================================================================
+AI_ISM_PHRASES = {
+    "opening": [
+        "it is important to note that",
+        "it should be noted that",
+        "it is widely recognized that",
+        "it is evident that",
+        "it is clear that",
+        "one could argue that",
+        "one might suggest that",
+        "furthermore, it is",
+    ],
+    "closing": [
+        "in conclusion",
+        "to summarize",
+        "in summary",
+        "to conclude",
+        "ultimately",
+        "in essence",
+        "it is therefore clear",
+        "in light of the above",
+    ],
+    "connector": [
+        "delve into",
+        "shed light on",
+        "pave the way",
+        "leverage",
+        "in the context of",
+        "moreover",
+        "furthermore",
+        "in the interest of",
+        "in order to",
+        "so as to",
+        "with respect to",
+        "as a matter of fact",
+    ],
+    "passive": [
+        "can be seen",
+        "is considered",
+        "is known",
+        "is thought",
+        "is believed",
+        "is said to",
+        "is noted",
+        "is suggested",
+    ],
+}
+
+
+# ============================================================================
+# METRIC NORMALIZATION RULES
+# ============================================================================
+def normalize_metric(metric_value: float, metric_type: MetricType) -> float:
+    """
+    Normalize metric value to 0-1 scale for consistent display.
+    
+    Args:
+        metric_value: Raw metric value
+        metric_type: Type of metric
+    
+    Returns:
+        Normalized value 0-1 (capped)
+    """
+    if metric_type == MetricType.BURSTINESS:
+        # Burstiness: 0-3 → 0-1
+        # 0.5 = very low, 1.5 = optimal, 3.0 = very high
+        return min(metric_value / 3.0, 1.0)
+    
+    elif metric_type == MetricType.LEXICAL_DIVERSITY:
+        # Already normalized 0-1
+        return min(metric_value, 1.0)
+    
+    elif metric_type == MetricType.SYNTACTIC_COMPLEXITY:
+        # Already normalized 0-1
+        return min(metric_value, 1.0)
+    
+    elif metric_type == MetricType.AI_ISM_LIKELIHOOD:
+        # AI-ism: 0-100 → 0-1
+        # But invert interpretation (high = bad)
+        raw_norm = min(metric_value / 100.0, 1.0)
+        return 1.0 - raw_norm  # Invert: high AI-ism = low human-ness
+    
+    return metric_value
+
+
+def interpret_metric(metric_value: float, metric_type: MetricType) -> Dict[str, str]:
+    """
+    Generate human-readable interpretation of a metric.
+    
+    Returns dict with 'level' (low/medium/high) and 'interpretation' text.
+    """
+    norm = normalize_metric(metric_value, metric_type)
+    
+    if norm < 0.33:
+        level = "low"
+    elif norm < 0.67:
+        level = "medium"
+    else:
+        level = "high"
+    
+    # Return interpretation based on metric type
+    interpretations = {
+        MetricType.BURSTINESS: {
+            "low": "Machine-like uniformity",
+            "medium": "Moderate variation",
+            "high": "Human-like natural variation"
+        },
+        MetricType.LEXICAL_DIVERSITY: {
+            "low": "Formulaic, repetitive vocabulary",
+            "medium": "Moderate vocabulary richness",
+            "high": "Rich, varied vocabulary"
+        },
+        MetricType.SYNTACTIC_COMPLEXITY: {
+            "low": "Simple, repetitive structures",
+            "medium": "Moderate complexity",
+            "high": "Complex, varied structures"
+        },
+        MetricType.AI_ISM_LIKELIHOOD: {
+            "low": "Natural human-like patterns",
+            "medium": "Mixed characteristics",
+            "high": "Formulaic AI-like patterns"
+        }
+    }
+    
+    return {
+        "level": level,
+        "interpretation": interpretations[metric_type].get(level, "Unknown")
+    }
+
+
+# ============================================================================
+# INTERPRETATION GUIDES
+# ============================================================================
+METRIC_NARRATIVES = {
+    MetricType.BURSTINESS: {
+        "what_is_it": (
+            "Burstiness measures how much your sentence lengths vary. "
+            "A high burstiness means you write sentences of very different lengths "
+            "(some short, some long). A low burstiness means your sentences are "
+            "all similar lengths."
+        ),
+        "why_matters": (
+            "AI models optimize for readability by making sentence lengths uniform. "
+            "Human writers naturally vary their sentence lengths for emphasis and flow. "
+            "Drop in burstiness indicates AI editing standardized your writing."
+        ),
+        "why_changed": (
+            "AI editors often restructure complex sentences into shorter, simpler ones, "
+            "which reduces the natural variation in your sentence lengths."
+        ),
+        "recommendation": (
+            "Review the edited sentences. Consider keeping some of your original "
+            "longer or more complex constructions while accepting AI improvements "
+            "for clarity."
+        ),
+    },
+    MetricType.LEXICAL_DIVERSITY: {
+        "what_is_it": (
+            "Lexical diversity measures how many different words you use relative "
+            "to total words. Higher diversity means richer vocabulary; lower means "
+            "you repeat words or use formulaic phrases."
+        ),
+        "why_matters": (
+            "AI models draw from common academic phrases and avoid less frequent words. "
+            "Your authentic writing, even with mistakes, uses a wider range of vocabulary. "
+            "Drop in diversity indicates AI introduced formulaic language."
+        ),
+        "why_changed": (
+            "AI editing replaces varied (but potentially awkward) word choices with "
+            "common, 'safe' alternatives from training data."
+        ),
+        "recommendation": (
+            "Keep some of your original less-common word choices if they are accurate. "
+            "They demonstrate your authentic voice and vocabulary growth."
+        ),
+    },
+    MetricType.SYNTACTIC_COMPLEXITY: {
+        "what_is_it": (
+            "Syntactic complexity measures the sophistication of your sentence structures. "
+            "It includes sentence length, use of dependent clauses, and descriptive phrases."
+        ),
+        "why_matters": (
+            "AI simplifies syntax for clarity, often removing complex (and authentic) "
+            "sentence structures. Your original writing shows your actual linguistic level."
+        ),
+        "why_changed": (
+            "AI editors break complex sentences into simpler ones and remove modifiers "
+            "that don't directly aid clarity."
+        ),
+        "recommendation": (
+            "Review AI simplifications. Keep complex structures that were grammatically "
+            "correct; they show your advancing syntax skills."
+        ),
+    },
+    MetricType.AI_ISM_LIKELIHOOD: {
+        "what_is_it": (
+            "AI-ism likelihood detects phrases and patterns typical of AI-generated text. "
+            "Common AI phrases include 'it is important to note that', 'delve into', "
+            "'in light of', and repetitive structures."
+        ),
+        "why_matters": (
+            "High AI-ism score indicates the text relies on AI-generated patterns, "
+            "not your authentic voice. Readers (including plagiarism detection systems) "
+            "may notice the shift."
+        ),
+        "why_changed": (
+            "AI editing replaced your original phrasing with formulaic alternatives "
+            "from its training data."
+        ),
+        "recommendation": (
+            "Revert some AI suggestions in favor of your original phrasing, especially "
+            "opening and closing sentences where your voice matters most."
+        ),
+    },
+}
