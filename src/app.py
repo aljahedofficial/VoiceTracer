@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'src'))
 from models import DocumentPair, AnalysisResult, MetricScores, MetricDeltas, Session
 from metric_calculator import MetricCalculationEngine, MetricComparisonEngine, AIismCalculator
 from text_processor import TextProcessor
-from visualizations import RadarChartGenerator, BarChartGenerator, TextDiffVisualizer, DeltaVisualization
+from visualizations import RadarChartGenerator, BarChartGenerator, TextDiffVisualizer, DeltaVisualization, BurstinessVisualization
 from exporters import ExportFactory, ExportMetadata
 import difflib
 
@@ -495,9 +495,10 @@ def render_step_3_visualize():
     st.markdown("### Choose Your Visualization")
     viz_type = st.radio(
         "Select visualization:",
-        options=["radar", "bars", "deltas", "diff"],
+        options=["radar", "burstiness", "bars", "deltas", "diff"],
         format_func=lambda x: {
             "radar": "🎯 6-Axis Radar (Original vs Edited)",
+            "burstiness": "📊 Syntactic Burstiness",
             "bars": "📊 Bar Chart Comparison",
             "deltas": "📈 Metric Changes",
             "diff": "📝 Text Difference Highlight"
@@ -555,6 +556,74 @@ def render_step_3_visualize():
                 "**Overlap** = Preserved voice  \n"
                 "**Divergence** = Loss of voice authenticity"
             )
+        
+        elif viz_type == "burstiness":
+            st.markdown("### Syntactic Burstiness")
+            st.markdown("*Word count per sentence reveals writing patterns*")
+            
+            # Generate burstiness visualizations
+            bar_fig, stats = BurstinessVisualization.create_sentence_length_bars(
+                doc_pair.original_text, 
+                doc_pair.edited_text
+            )
+            
+            # Display statistics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Avg Words (Original)", f"{stats['original']['avg_words']:.1f}")
+            with col2:
+                st.metric("Variance (Original)", f"{stats['original']['variance']:.1f}")
+            with col3:
+                st.metric("Avg Words (Edited)", f"{stats['edited']['avg_words']:.1f}")
+            with col4:
+                st.metric("Variance (Edited)", f"{stats['edited']['variance']:.1f}")
+            
+            # Pattern analysis
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if stats['original']['variance'] >= 4.0:
+                    st.success(f"✓ Original: **{stats['original']['pattern']}**")
+                elif stats['original']['variance'] >= 2.0:
+                    st.warning(f"⚠ Original: **{stats['original']['pattern']}**")
+                else:
+                    st.error(f"✗ Original: **{stats['original']['pattern']}**")
+            
+            with col_b:
+                if stats['edited']['variance'] >= 4.0:
+                    st.success(f"✓ Edited: **{stats['edited']['pattern']}**")
+                elif stats['edited']['variance'] >= 2.0:
+                    st.warning(f"⚠ Edited: **{stats['edited']['pattern']}**")
+                else:
+                    st.error(f"✗ Edited: **{stats['edited']['pattern']}**")
+            
+            # Display bar chart
+            st.plotly_chart(bar_fig, use_container_width=True)
+            
+            # Display fluctuation curve
+            fluct_fig = BurstinessVisualization.create_fluctuation_curve(
+                doc_pair.original_text,
+                doc_pair.edited_text
+            )
+            st.plotly_chart(fluct_fig, use_container_width=True)
+            
+            # Analysis insight
+            st.markdown("### Analysis")
+            variance_change = stats['edited']['variance'] - stats['original']['variance']
+            if variance_change < -1.0:
+                st.info(
+                    f"📉 **High variation detected**: AI editing reduced sentence variation by {abs(variance_change):.1f} points. "
+                    "This indicates more uniform, machine-like sentence structure. Consider restoring some original sentence variety."
+                )
+            elif variance_change < 0:
+                st.info(
+                    f"📊 **Moderate reduction**: Sentence variation decreased by {abs(variance_change):.1f} points. "
+                    "Some natural flow may have been smoothed out by AI editing."
+                )
+            else:
+                st.success(
+                    f"📈 **Variation maintained or improved**: Your edited text preserves natural variation patterns. "
+                    "The editing maintained authentic human-like sentence flow."
+                )
         
         elif viz_type == "bars":
             st.markdown("### Metric Comparison (Bar Chart)")

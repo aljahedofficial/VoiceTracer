@@ -323,3 +323,175 @@ class MetricsOverTimeChart:
         )
         
         return fig
+
+
+class BurstinessVisualization:
+    """Generates detailed burstiness analysis charts."""
+    
+    @staticmethod
+    def create_sentence_length_bars(original_text: str, edited_text: str) -> Tuple[go.Figure, Dict]:
+        """
+        Create bar chart showing word count per sentence for both texts.
+        
+        Args:
+            original_text: Original text
+            edited_text: Edited text
+        
+        Returns:
+            Tuple of (Plotly figure object, statistics dict)
+        """
+        # Split texts into sentences
+        import re
+        
+        def split_sentences(text: str) -> List[str]:
+            """Split text into sentences."""
+            sentences = re.split(r'[.!?]+', text)
+            return [s.strip() for s in sentences if s.strip()]
+        
+        def get_word_counts(sentences: List[str]) -> List[int]:
+            """Get word count for each sentence."""
+            return [len(s.split()) for s in sentences]
+        
+        original_sentences = split_sentences(original_text)
+        edited_sentences = split_sentences(edited_text)
+        
+        original_counts = get_word_counts(original_sentences)
+        edited_counts = get_word_counts(edited_sentences)
+        
+        # Calculate statistics
+        import numpy as np
+        
+        orig_avg = float(np.mean(original_counts)) if original_counts else 0.0
+        orig_var = float(np.var(original_counts)) if original_counts else 0.0
+        edit_avg = float(np.mean(edited_counts)) if edited_counts else 0.0
+        edit_var = float(np.var(edited_counts)) if edited_counts else 0.0
+        
+        # Determine pattern
+        def classify_pattern(variance: float) -> str:
+            if variance < 2.0:
+                return "Machine-like Pattern"
+            elif variance < 4.0:
+                return "Moderate Pattern"
+            else:
+                return "Human-like Pattern"
+        
+        stats = {
+            'original': {
+                'avg_words': orig_avg,
+                'variance': orig_var,
+                'pattern': classify_pattern(orig_var)
+            },
+            'edited': {
+                'avg_words': edit_avg,
+                'variance': edit_var,
+                'pattern': classify_pattern(edit_var)
+            }
+        }
+        
+        # Create visualization - show first 10 sentences for clarity
+        max_sentences = min(10, max(len(original_counts), len(edited_counts)))
+        sentence_indices = list(range(1, max_sentences + 1))
+        
+        original_display = original_counts[:max_sentences] + [0] * (max_sentences - len(original_counts[:max_sentences]))
+        edited_display = edited_counts[:max_sentences] + [0] * (max_sentences - len(edited_counts[:max_sentences]))
+        
+        fig = go.Figure()
+        
+        # Add original trace (green for human)
+        fig.add_trace(go.Bar(
+            x=sentence_indices,
+            y=original_display,
+            name='Original (Human)',
+            marker_color='#2ca02c',
+            opacity=0.8,
+        ))
+        
+        # Add edited trace (red for AI)
+        fig.add_trace(go.Bar(
+            x=sentence_indices,
+            y=edited_display,
+            name='Edited (AI)',
+            marker_color='#d62728',
+            opacity=0.8,
+        ))
+        
+        fig.update_layout(
+            title='Word Count per Sentence',
+            xaxis_title='Sentence Index',
+            yaxis_title='Word Count (WC)',
+            barmode='group',
+            height=350,
+            hovermode='x unified',
+            showlegend=True,
+        )
+        
+        return fig, stats
+    
+    @staticmethod
+    def create_fluctuation_curve(original_text: str, edited_text: str) -> go.Figure:
+        """
+        Create line chart showing fluctuation pattern across sentences.
+        
+        Args:
+            original_text: Original text
+            edited_text: Edited text
+        
+        Returns:
+            Plotly figure object
+        """
+        import re
+        
+        def split_sentences(text: str) -> List[str]:
+            """Split text into sentences."""
+            sentences = re.split(r'[.!?]+', text)
+            return [s.strip() for s in sentences if s.strip()]
+        
+        def get_word_counts(sentences: List[str]) -> List[int]:
+            """Get word count for each sentence."""
+            return [len(s.split()) for s in sentences]
+        
+        original_sentences = split_sentences(original_text)
+        edited_sentences = split_sentences(edited_text)
+        
+        original_counts = get_word_counts(original_sentences)
+        edited_counts = get_word_counts(edited_sentences)
+        
+        # Show first 10 sentences for clarity
+        max_sentences = min(10, max(len(original_counts), len(edited_counts)))
+        sentence_indices = list(range(1, max_sentences + 1))
+        
+        original_display = original_counts[:max_sentences]
+        edited_display = edited_counts[:max_sentences]
+        
+        fig = go.Figure()
+        
+        # Add original trace (green for human)
+        fig.add_trace(go.Scatter(
+            x=sentence_indices,
+            y=original_display,
+            mode='lines+markers',
+            name='Original (Human)',
+            line=dict(color='#2ca02c', width=3),
+            marker=dict(size=8),
+        ))
+        
+        # Add edited trace (red for AI)
+        fig.add_trace(go.Scatter(
+            x=sentence_indices,
+            y=edited_display,
+            mode='lines+markers',
+            name='Edited (AI)',
+            line=dict(color='#d62728', width=3),
+            marker=dict(size=8),
+        ))
+        
+        fig.update_layout(
+            title='Fluctuation Pattern',
+            xaxis_title='Sentence Index',
+            yaxis_title='Word Count',
+            height=300,
+            hovermode='x unified',
+            showlegend=True,
+        )
+        
+        return fig
