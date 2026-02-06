@@ -97,6 +97,10 @@ def _get_calibration_defaults() -> dict:
     return defaults
 
 
+def _get_default_calibration_values() -> dict:
+    return _get_calibration_defaults()
+
+
 def _ensure_calibration_state() -> None:
     if "calibration_values" not in st.session_state:
         st.session_state.calibration_values = _get_calibration_defaults()
@@ -182,6 +186,79 @@ def render_standard_legend_table(title: str = "Standard Values Legend") -> None:
         })
     st.markdown(f"#### {title}")
     st.table(rows)
+
+
+def _score_against_standards(value: float, human: float, ai: float) -> float:
+    if human == ai:
+        return 0.5
+    score = (value - ai) / (human - ai)
+    return max(0.0, min(score, 1.0))
+
+
+def _label_from_score(score: float) -> str:
+    if score >= 0.66:
+        return "Human-like"
+    if score >= 0.33:
+        return "Moderate"
+    return "AI-like"
+
+
+def _build_calibration_payload(result: AnalysisResult) -> dict:
+    _ensure_calibration_state()
+    default_vals = _get_default_calibration_values()
+    adjusted_vals = st.session_state.calibration_values
+
+    scores_default = {"original": {}, "edited": {}}
+    scores_adjusted = {"original": {}, "edited": {}}
+    labels_default = {"original": {}, "edited": {}}
+    labels_adjusted = {"original": {}, "edited": {}}
+    impact = {"original": {}, "edited": {}}
+
+    for spec in _calibration_specs():
+        key = spec["key"]
+        orig_val = getattr(result.original_metrics, key)
+        edit_val = getattr(result.edited_metrics, key)
+
+        default_human = default_vals["human"][key]
+        default_ai = default_vals["ai"][key]
+        adjusted_human = adjusted_vals["human"][key]
+        adjusted_ai = adjusted_vals["ai"][key]
+
+        default_orig_score = _score_against_standards(orig_val, default_human, default_ai)
+        default_edit_score = _score_against_standards(edit_val, default_human, default_ai)
+        adjusted_orig_score = _score_against_standards(orig_val, adjusted_human, adjusted_ai)
+        adjusted_edit_score = _score_against_standards(edit_val, adjusted_human, adjusted_ai)
+
+        scores_default["original"][key] = default_orig_score
+        scores_default["edited"][key] = default_edit_score
+        scores_adjusted["original"][key] = adjusted_orig_score
+        scores_adjusted["edited"][key] = adjusted_edit_score
+
+        labels_default["original"][key] = _label_from_score(default_orig_score)
+        labels_default["edited"][key] = _label_from_score(default_edit_score)
+        labels_adjusted["original"][key] = _label_from_score(adjusted_orig_score)
+        labels_adjusted["edited"][key] = _label_from_score(adjusted_edit_score)
+
+        impact["original"][key] = adjusted_orig_score - default_orig_score
+        impact["edited"][key] = adjusted_edit_score - default_edit_score
+
+    return {
+        "default": default_vals,
+        "adjusted": adjusted_vals,
+        "scores": {
+            "default": scores_default,
+            "adjusted": scores_adjusted,
+        },
+        "labels": {
+            "default": labels_default,
+            "adjusted": labels_adjusted,
+        },
+        "impact": impact,
+        "notes": {
+            "scale": "Scores are normalized to 0-1 where 1.0 is closer to human standards and 0.0 is closer to AI standards.",
+            "impact": "Impact shows adjusted score minus default score for each metric.",
+        },
+    }
 
 
 def extract_text_from_txt(file) -> str:
@@ -339,6 +416,12 @@ def render_step_1_input():
             "grammatical improvement while simultaneously creating the potential for diminished stylistic individuality."
         )
         st.rerun()
+
+    st.markdown("### Manual Calibration")
+    st.caption("Adjust standards before analysis. Changes update calibrated results in later steps.")
+    render_calibration_panel("step1_calibration", expanded=True)
+    render_standard_legend_table("Human vs AI Standard Values")
+    st.markdown("---")
     
     col1, col2 = st.columns(2)
     
@@ -505,8 +588,6 @@ def render_step_2_metrics():
         return
     
     result = st.session_state.analysis_result
-
-    render_calibration_panel("step2_metrics")
     
     st.markdown("### Quick Summary")
     st.markdown("Compare your metrics across 8 core dimensions:")
@@ -594,6 +675,49 @@ def render_step_2_metrics():
                 )
     
     # Detailed explanations with tabs
+    st.markdown("### Calibration-Based Scores")
+    calibration_payload = _build_calibration_payload(result)
+    st.caption(calibration_payload["notes"]["scale"])
+
+    def render_calibration_table(title: str, scores: dict, labels: dict) -> None:
+        rows = []
+        for spec in _calibration_specs():
+            key = spec["key"]
+            rows.append({
+                "Metric": spec["label"],
+                "Original score": f"{scores['original'][key]:.2f}",
+                "Original label": labels["original"][key],
+                "Edited score": f"{scores['edited'][key]:.2f}",
+                "Edited label": labels["edited"][key],
+            })
+        st.markdown(f"#### {title}")
+        st.table(rows)
+
+    render_calibration_table(
+        "Default Calibration (no manual adjustments)",
+        calibration_payload["scores"]["default"],
+        calibration_payload["labels"]["default"],
+    )
+    render_calibration_table(
+        "Adjusted Calibration (manual settings)",
+        calibration_payload["scores"]["adjusted"],
+        calibration_payload["labels"]["adjusted"],
+    )
+
+    impact_rows = []
+    for spec in _calibration_specs():
+        key = spec["key"]
+        impact_rows.append({
+            "Metric": spec["label"],
+            "Original score Δ": f"{calibration_payload['impact']['original'][key]:+.2f}",
+            "Edited score Δ": f"{calibration_payload['impact']['edited'][key]:+.2f}",
+        })
+    st.markdown("#### Calibration Impact (Adjusted - Default)")
+    st.table(impact_rows)
+
+    st.caption(calibration_payload["notes"]["impact"])
+
+    # Detailed explanations with tabs
     st.markdown("### Detailed Analysis")
     
     tab_burst, tab_lex, tab_syn, tab_ai, tab_fwr, tab_dmd, tab_id, tab_hedge = st.tabs(
@@ -625,7 +749,6 @@ def render_step_2_metrics():
             st.metric("Edited", f"{result.edited_metrics.burstiness:.3f}", 
                      delta=f"{result.metric_deltas.burstiness_delta:+.3f}")
 
-        render_standard_legend("burstiness", "Burstiness", "{:.2f}")
         
         st.markdown("#### Why It Changed")
         st.success(
@@ -655,7 +778,6 @@ def render_step_2_metrics():
             st.metric("Edited", f"{result.edited_metrics.lexical_diversity:.3f}",
                      delta=f"{result.metric_deltas.lexical_diversity_delta:+.3f}")
 
-        render_standard_legend("lexical_diversity", "Lexical Diversity", "{:.2f}")
         
         st.markdown("#### Why It Changed")
         st.success(
@@ -684,7 +806,6 @@ def render_step_2_metrics():
             st.metric("Edited", f"{result.edited_metrics.syntactic_complexity:.3f}",
                      delta=f"{result.metric_deltas.syntactic_complexity_delta:+.3f}")
 
-        render_standard_legend("syntactic_complexity", "Syntactic Complexity", "{:.2f}")
         
         st.markdown("#### Why It Changed")
         st.success(
@@ -713,7 +834,6 @@ def render_step_2_metrics():
             st.metric("Edited", f"{result.edited_metrics.ai_ism_likelihood:.0f}",
                      delta=f"{result.metric_deltas.ai_ism_delta:+.1f}")
 
-        render_standard_legend("ai_ism_likelihood", "AI-ism Likelihood", "{:.0f}")
         
         st.markdown("#### AI-isms Detected")
         if result.ai_isms:
@@ -748,7 +868,6 @@ def render_step_2_metrics():
                 delta=f"{result.metric_deltas.function_word_ratio_delta:+.3f}",
             )
 
-        render_standard_legend("function_word_ratio", "Function Word Ratio", "{:.2f}")
 
         st.markdown("#### Why It Changed")
         st.success(
@@ -780,7 +899,6 @@ def render_step_2_metrics():
                 delta=f"{result.metric_deltas.discourse_marker_density_delta:+.2f}",
             )
 
-        render_standard_legend("discourse_marker_density", "Discourse Marker Density", "{:.1f}")
 
         st.markdown("#### Why It Changed")
         st.success(
@@ -812,7 +930,6 @@ def render_step_2_metrics():
                 delta=f"{result.metric_deltas.information_density_delta:+.3f}",
             )
 
-        render_standard_legend("information_density", "Information Density", "{:.2f}")
 
         st.markdown("#### Why It Changed")
         st.success(
@@ -843,7 +960,6 @@ def render_step_2_metrics():
                 delta=f"{result.metric_deltas.epistemic_hedging_delta:+.3f}",
             )
 
-        render_standard_legend("epistemic_hedging", "Epistemic Hedging", "{:.2f}")
 
         st.markdown("#### Why It Changed")
         st.success(
@@ -902,13 +1018,9 @@ def render_step_3_visualize():
         if viz_type == "radar":
             st.markdown("### 8-Axis Radar Chart")
             st.markdown("*Compare your original and edited texts across 8 linguistic dimensions*")
-
-            render_calibration_panel("viz_radar")
             
             fig = RadarChartGenerator.create_metric_radar(radar_orig_metrics, radar_edited_metrics)
             st.plotly_chart(fig, use_container_width=True)
-
-            render_standard_legend_table("Human vs AI Standards")
             
             st.markdown("### What to Look For")
             st.info(
@@ -922,22 +1034,16 @@ def render_step_3_visualize():
             st.markdown("### Individual Metric Charts")
             st.markdown("*Each metric shown as its own comparison chart*")
 
-            render_calibration_panel("viz_individual")
-
             panels = IndividualMetricCharts.create_metric_panels(bar_orig_metrics, bar_edited_metrics)
             for idx in range(0, len(panels), 2):
                 cols = st.columns(2)
                 for col, (_, fig) in zip(cols, panels[idx:idx + 2]):
                     with col:
                         st.plotly_chart(fig, use_container_width=True)
-
-            render_standard_legend_table("Human vs AI Standards")
         
         elif viz_type == "burstiness":
             st.markdown("### Syntactic Burstiness")
             st.markdown("*Word count per sentence reveals writing patterns*")
-
-            render_calibration_panel("viz_burstiness")
 
             threshold_defaults = BurstinessVisualization._get_burstiness_thresholds()
             with st.expander("Heuristic Calibration", expanded=False):
@@ -974,8 +1080,6 @@ def render_step_3_visualize():
                     f"human_cutoff={threshold_defaults.get('human_cutoff', 0.45):.2f}, "
                     f"delta_cutoff={threshold_defaults.get('delta_cutoff', 0.08):.2f}"
                 )
-
-            render_standard_legend("burstiness", "Burstiness", "{:.2f}")
             
             # Generate burstiness visualizations
             bar_fig, stats = BurstinessVisualization.create_sentence_length_bars(
@@ -1074,13 +1178,9 @@ def render_step_3_visualize():
         elif viz_type == "bars":
             st.markdown("### Metric Comparison (Bar Chart)")
             st.markdown("*Side-by-side comparison of key metrics*")
-
-            render_calibration_panel("viz_bars")
             
             fig = BarChartGenerator.create_metric_comparison(bar_orig_metrics, bar_edited_metrics)
             st.plotly_chart(fig, use_container_width=True)
-
-            render_standard_legend_table("Human vs AI Standards")
             
             st.markdown("### Interpretation")
             increases = []
@@ -1111,8 +1211,6 @@ def render_step_3_visualize():
         elif viz_type == "deltas":
             st.markdown("### Metric Shift Visualization")
             st.markdown("*Absolute shift for each metric from original to edited*")
-
-            render_calibration_panel("viz_deltas")
             
             # Create deltas dict in expected format
             deltas_dict = {
@@ -1128,8 +1226,6 @@ def render_step_3_visualize():
             
             fig = DeltaVisualization.create_delta_chart(deltas_dict)
             st.plotly_chart(fig, use_container_width=True)
-
-            render_standard_legend_table("Human vs AI Standards")
             
             st.markdown("### Summary of Changes")
             
@@ -1155,8 +1251,6 @@ def render_step_3_visualize():
         elif viz_type == "diff":
             st.markdown("### Text Difference Highlight")
             st.markdown("*Original text (green) vs Edited text (red) - showing changes*")
-
-            render_calibration_panel("viz_diff")
             
             # Create diff
             original_words = doc_pair.original_text.split()
@@ -1196,8 +1290,6 @@ def render_step_3_visualize():
                 st.markdown(edited_html, unsafe_allow_html=True)
             
             st.markdown("**Legend**: 🟢 Original removed, 🟠 Original replaced, 🔴 AI-edited added, 🟤 AI-edited replaced")
-
-            render_standard_legend_table("Human vs AI Standards")
     
     except Exception as e:
         st.error(f"Error generating visualization: {str(e)}")
@@ -1259,6 +1351,7 @@ def render_step_4_export():
     if st.button("📥 Generate & Download", type="primary"):
         with st.spinner(f"Generating {selected_format.upper()} export..."):
             try:
+                calibration_payload = _build_calibration_payload(result)
                 # Calculate text metadata
                 orig_metadata = {
                     'word_count': len(doc_pair.original_text.split()),
@@ -1285,6 +1378,7 @@ def render_step_4_export():
                     include_edited_text=include_edited,
                     include_metrics=include_metrics,
                     include_ai_isms=include_ai_isms,
+                    calibration=calibration_payload,
                 )
                 
                 # Prepare download - handle both string and binary data

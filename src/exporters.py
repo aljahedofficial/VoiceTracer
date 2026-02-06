@@ -29,10 +29,11 @@ class ExportMetadata:
         analysis_result,
         doc_pair,
         original_metadata: Dict,
-        edited_metadata: Dict
+        edited_metadata: Dict,
+        calibration: Dict = None,
     ) -> Dict[str, Any]:
         """Create metadata for export."""
-        return {
+        metadata = {
             'title': 'VoiceTracer Analysis Report',
             'created_at': datetime.now().isoformat(),
             'analysis_id': analysis_result.doc_pair_id,
@@ -89,6 +90,11 @@ class ExportMetadata:
                 'source': 'https://github.com/VoiceTracer',
             },
         }
+
+        if calibration:
+            metadata['calibration'] = calibration
+
+        return metadata
 
 
 class CSVExporter:
@@ -191,6 +197,31 @@ class CSVExporter:
                     ai_ism.get('context', '')[:100],  # Truncate context
                 ])
 
+        calibration = options.get('calibration')
+        if calibration:
+            writer.writerow([])
+            writer.writerow(['Calibration Standards'])
+            writer.writerow(['Mode', 'Metric', 'Human Standard', 'AI Standard'])
+            for mode in ['default', 'adjusted']:
+                for metric, human_value in calibration.get(mode, {}).get('human', {}).items():
+                    ai_value = calibration.get(mode, {}).get('ai', {}).get(metric, '')
+                    writer.writerow([mode, metric, human_value, ai_value])
+
+            writer.writerow([])
+            writer.writerow(['Calibration Impact (Score Δ)'])
+            writer.writerow(['Metric', 'Original Δ', 'Edited Δ'])
+            impact = calibration.get('impact', {})
+            for metric, orig_delta in impact.get('original', {}).items():
+                edit_delta = impact.get('edited', {}).get(metric, '')
+                writer.writerow([metric, round(orig_delta, 3), round(edit_delta, 3)])
+
+            notes = calibration.get('notes', {})
+            if notes:
+                writer.writerow([])
+                writer.writerow(['Calibration Notes'])
+                for key, text in notes.items():
+                    writer.writerow([key, text])
+
         return output.getvalue()
 
 
@@ -218,7 +249,8 @@ class JSONExporter:
                 analysis_result,
                 doc_pair,
                 original_metadata,
-                edited_metadata
+                edited_metadata,
+                calibration=options.get('calibration'),
             ),
             'text_statistics': {
                 'original': original_metadata,
@@ -295,6 +327,10 @@ class JSONExporter:
         if include_edited_text:
             export_data['texts'] = export_data.get('texts', {})
             export_data['texts']['edited'] = doc_pair.edited_text
+
+        calibration = options.get('calibration')
+        if calibration:
+            export_data['calibration'] = calibration
         
         return json.dumps(export_data, indent=2)
 
@@ -404,6 +440,57 @@ class PDFExporter:
         ]))
         story.append(metrics_table)
         story.append(Spacer(1, 0.3*inch))
+
+        calibration = options.get('calibration')
+        if calibration:
+            story.append(Paragraph("Calibration Standards", styles['Heading2']))
+            calibration_rows = [['Mode', 'Metric', 'Human Standard', 'AI Standard']]
+            for mode in ['default', 'adjusted']:
+                for metric, human_value in calibration.get(mode, {}).get('human', {}).items():
+                    ai_value = calibration.get(mode, {}).get('ai', {}).get(metric, '')
+                    calibration_rows.append([mode, str(metric), str(human_value), str(ai_value)])
+
+            calibration_table = Table(calibration_rows, colWidths=[1.2*inch, 1.6*inch, 1.6*inch, 1.6*inch])
+            calibration_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#444444')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(calibration_table)
+            story.append(Spacer(1, 0.2*inch))
+
+            impact_rows = [['Metric', 'Original Δ', 'Edited Δ']]
+            impact = calibration.get('impact', {})
+            for metric, orig_delta in impact.get('original', {}).items():
+                edit_delta = impact.get('edited', {}).get(metric, '')
+                impact_rows.append([str(metric), f"{orig_delta:+.3f}", f"{edit_delta:+.3f}"])
+
+            impact_table = Table(impact_rows, colWidths=[2.0*inch, 2.0*inch, 2.0*inch])
+            impact_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(Paragraph("Calibration Impact (Score Δ)", styles['Heading3']))
+            story.append(impact_table)
+            story.append(Spacer(1, 0.2*inch))
+
+            notes = calibration.get('notes', {})
+            if notes:
+                story.append(Paragraph("Calibration Notes", styles['Heading3']))
+                for text in notes.values():
+                    story.append(Paragraph(text, styles['Normal']))
+                story.append(Spacer(1, 0.2*inch))
         
         # AI-isms detected
         if analysis_result.ai_isms:
@@ -511,6 +598,42 @@ class ExcelExporter:
             }
             df_stats = pd.DataFrame(stats_data)
             df_stats.to_excel(writer, sheet_name='Statistics', index=False)
+
+            calibration = options.get('calibration')
+            if calibration:
+                standards_rows = []
+                for mode in ['default', 'adjusted']:
+                    for metric, human_value in calibration.get(mode, {}).get('human', {}).items():
+                        ai_value = calibration.get(mode, {}).get('ai', {}).get(metric, '')
+                        standards_rows.append({
+                            'Mode': mode,
+                            'Metric': metric,
+                            'Human Standard': human_value,
+                            'AI Standard': ai_value,
+                        })
+
+                impact_rows = []
+                impact = calibration.get('impact', {})
+                for metric, orig_delta in impact.get('original', {}).items():
+                    impact_rows.append({
+                        'Metric': metric,
+                        'Original Δ': orig_delta,
+                        'Edited Δ': impact.get('edited', {}).get(metric, ''),
+                    })
+
+                notes_rows = [
+                    {'Note': text}
+                    for text in calibration.get('notes', {}).values()
+                ]
+
+                df_standards = pd.DataFrame(standards_rows)
+                df_impact = pd.DataFrame(impact_rows)
+                df_notes = pd.DataFrame(notes_rows)
+
+                df_standards.to_excel(writer, sheet_name='Calibration Standards', index=False)
+                df_impact.to_excel(writer, sheet_name='Calibration Impact', index=False)
+                if not df_notes.empty:
+                    df_notes.to_excel(writer, sheet_name='Calibration Notes', index=False)
         
         output.seek(0)
         return output
@@ -618,6 +741,51 @@ class DocxExporter:
                 cells[j].text = text
         
         doc.add_paragraph()
+
+        calibration = options.get('calibration')
+        if calibration:
+            doc.add_heading('Calibration Standards', 1)
+            standards_table = doc.add_table(rows=1, cols=4)
+            standards_table.style = 'Light Grid Accent 1'
+            header_cells = standards_table.rows[0].cells
+            header_cells[0].text = 'Mode'
+            header_cells[1].text = 'Metric'
+            header_cells[2].text = 'Human Standard'
+            header_cells[3].text = 'AI Standard'
+
+            for mode in ['default', 'adjusted']:
+                for metric, human_value in calibration.get(mode, {}).get('human', {}).items():
+                    ai_value = calibration.get(mode, {}).get('ai', {}).get(metric, '')
+                    row_cells = standards_table.add_row().cells
+                    row_cells[0].text = mode
+                    row_cells[1].text = str(metric)
+                    row_cells[2].text = str(human_value)
+                    row_cells[3].text = str(ai_value)
+
+            doc.add_paragraph()
+            doc.add_heading('Calibration Impact (Score Δ)', 2)
+            impact_table = doc.add_table(rows=1, cols=3)
+            impact_table.style = 'Light Grid Accent 1'
+            header_cells = impact_table.rows[0].cells
+            header_cells[0].text = 'Metric'
+            header_cells[1].text = 'Original Δ'
+            header_cells[2].text = 'Edited Δ'
+
+            impact = calibration.get('impact', {})
+            for metric, orig_delta in impact.get('original', {}).items():
+                row_cells = impact_table.add_row().cells
+                row_cells[0].text = str(metric)
+                row_cells[1].text = f"{orig_delta:+.3f}"
+                row_cells[2].text = f"{impact.get('edited', {}).get(metric, 0.0):+.3f}"
+
+            notes = calibration.get('notes', {})
+            if notes:
+                doc.add_paragraph()
+                doc.add_heading('Calibration Notes', 2)
+                for text in notes.values():
+                    doc.add_paragraph(text)
+
+            doc.add_paragraph()
         
         # AI-isms Detected
         if analysis_result.ai_isms:
