@@ -835,6 +835,13 @@ def render_step_3_visualize():
                     f"📈 **Variation maintained or improved**: Your edited text preserves natural burstiness patterns. "
                     "The editing maintained authentic human-like sentence flow."
                 )
+
+            # Threshold transparency
+            st.caption(
+                f"Thresholds used (normalized): ai_cutoff={ai_cutoff:.2f}, "
+                f"human_cutoff={human_cutoff:.2f}, delta_cutoff={delta_cutoff:.2f}"
+            )
+            st.caption(f"Calibration threshold (delta): {delta_cutoff:.2f}")
         
         elif viz_type == "bars":
             st.markdown("### Metric Comparison (Bar Chart)")
